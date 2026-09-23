@@ -6,7 +6,6 @@ from typing import Optional
 
 app = FastAPI()
 
-# Lấy API Key an toàn từ biến môi trường của Render (không dán cứng key vào code)
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_KEY)
 
@@ -18,8 +17,6 @@ async def verify_news(
     image_base64: Optional[str] = Form(None)
 ):
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
         prompt = """
         Hãy kiểm tra nội dung và xác minh tính đúng sai của thông tin sau:
         1. Tóm tắt ngắn gọn nội dung bài viết.
@@ -29,9 +26,11 @@ async def verify_news(
 
         contents = [prompt]
 
+        # 1. Xử lý phần Văn bản
         if text and text.strip():
             contents.append(f"Văn bản cần kiểm tra:\n{text.strip()}")
 
+        # 2. Xử lý phần Hình ảnh
         image_bytes = None
         mime_type = "image/jpeg"
 
@@ -56,8 +55,24 @@ async def verify_news(
         if not image_bytes and (not text or not text.strip()):
             return {"status": "error", "message": "Vui lòng gửi kèm hình ảnh hoặc văn bản!"}
 
-        response = model.generate_content(contents)
-        
+        # Cơ chế thử lần lượt các Tên Model Gemini (chống lỗi 404 Model Not Found)
+        model_names = ['gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-pro']
+        response = None
+        last_error = None
+
+        for m_name in model_names:
+            try:
+                model = genai.GenerativeModel(m_name)
+                response = model.generate_content(contents)
+                if response and response.text:
+                    break
+            except Exception as err:
+                last_error = err
+                continue
+
+        if not response or not response.text:
+            raise last_error or Exception("Không thể kết nối các mô hình Gemini AI")
+
         return {
             "status": "success",
             "result": response.text
