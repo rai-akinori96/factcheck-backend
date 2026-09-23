@@ -1,5 +1,6 @@
 import os
 import base64
+import json
 import google.generativeai as genai
 from fastapi import FastAPI, UploadFile, File, Form
 from typing import Optional
@@ -7,7 +8,8 @@ from typing import Optional
 app = FastAPI()
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_KEY)
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
 
 @app.post("/verify")
 async def verify_news(
@@ -17,61 +19,54 @@ async def verify_news(
     image_base64: Optional[str] = Form(None)
 ):
     try:
+        if not GEMINI_KEY:
+            return {"status": "error", "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"}
+
+        # Prompt Google Lens chuyên biệt kiểm chứng tin tức
         prompt = """
-        Hãy kiểm tra nội dung và xác minh tính đúng sai của thông tin sau:
-        1. Tóm tắt ngắn gọn nội dung bài viết.
-        2. Kết luận rõ ràng: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
-        3. Trình bày ngắn gọn sự thật dựa trên các nguồn báo chí chính thống.
+        Bạn là hệ thống kiểm chứng tin tức thông minh FactAI Lens.
+        Hãy phân tích hình ảnh/văn bản được chọn và tìm kiếm thông tin thực tế trên Google Search.
+
+        Yêu cầu trả về định dạng HTML gọn gàng gồm:
+        1. <b>[KẾT LUẬN]</b>: <span style="color:#34A853">🟢 CHÍNH XÁC</span> hoặc <span style="color:#EA4335">🔴 TIN GIẢ / XUYÊN TẠC</span> hoặc <span style="color:#FBBC05">🟡 CẦN KIỂM CHỨNG</span>
+        2. <b>[TÓM TẮT SỰ THẬT]</b>: Trình bày ngắn gọn trong 2-3 câu sự thật dựa trên báo chí chính thống.
+        3. <b>[NGUỒN ĐỐI SOÁT]</b>: Trích dẫn tên tờ báo hoặc đường link kiểm chứng nếu có.
         """
 
         contents = [prompt]
 
-        # 1. Xử lý phần Văn bản
         if text and text.strip():
-            contents.append(f"Văn bản cần kiểm tra:\n{text.strip()}")
+            contents.append(f"Văn bản khoanh vùng:\n{text.strip()}")
 
-        # 2. Xử lý phần Hình ảnh
         image_bytes = None
-        mime_type = "image/jpeg"
-
         if file:
             image_bytes = await file.read()
-            mime_type = file.content_type or "image/jpeg"
         else:
             raw_b64 = image_base64 or image
             if raw_b64 and raw_b64.strip():
                 clean_b64 = raw_b64.split(",")[-1].strip()
                 try:
                     image_bytes = base64.b64decode(clean_b64)
-                except Exception as b64_err:
-                    print(f"Lỗi b64: {b64_err}")
+                except Exception:
+                    pass
 
         if image_bytes:
-            contents.append({
-                'mime_type': mime_type,
-                'data': image_bytes
-            })
+            contents.append({'mime_type': 'image/jpeg', 'data': image_bytes})
 
         if not image_bytes and (not text or not text.strip()):
-            return {"status": "error", "message": "Vui lòng gửi kèm hình ảnh hoặc văn bản!"}
+            return {"status": "error", "message": "Vui lòng khoanh vùng văn bản hoặc hình ảnh!"}
 
-        # Cơ chế thử lần lượt các Tên Model Gemini (chống lỗi 404 Model Not Found)
-        model_names = ['gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-pro']
-        response = None
-        last_error = None
-
-        for m_name in model_names:
-            try:
-                model = genai.GenerativeModel(m_name)
-                response = model.generate_content(contents)
-                if response and response.text:
-                    break
-            except Exception as err:
-                last_error = err
-                continue
+        # Tích hợp Google Search Grounding (Tìm kiếm thông tin thực tế trên Google)
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash', tools=[{"google_search": {}}])
+            response = model.generate_content(contents)
+        except Exception:
+            # Fallback nếu model không hỗ trợ tool
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(contents)
 
         if not response or not response.text:
-            raise last_error or Exception("Không thể kết nối các mô hình Gemini AI")
+            return {"status": "error", "message": "Không nhận được phản hồi từ AI"}
 
         return {
             "status": "success",
@@ -79,7 +74,4 @@ async def verify_news(
         }
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Lỗi xử lý AI: {str(e)}"
-        }
+        return {"status": "error", "message": f"Lỗi xử lý: {str(e)}"}
