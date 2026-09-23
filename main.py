@@ -1,6 +1,8 @@
 import os
+import json
 import base64
-import httpx
+import urllib.request
+import urllib.error
 from fastapi import FastAPI, UploadFile, File, Form
 from typing import Optional
 
@@ -58,39 +60,37 @@ async def verify_news(
         if len(parts) == 1:
             return {"status": "error", "message": "Vui lòng khoanh vùng văn bản hoặc hình ảnh!"}
 
-        # Gửi Header x-goog-api-key chuẩn cho Auth Key AQ...
+        payload = json.dumps({"contents": [{"parts": parts}]}).encode('utf-8')
+
         headers = {
             "x-goog-api-key": GEMINI_KEY.strip(),
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "contents": [{"parts": parts}]
+            "Content-Type": "application/json",
+            "User-Agent": "FactAI-App/1.0"
         }
 
-        # Thử các Model tương thích với Auth Key
+        # Thử lần lượt các Model Gemini
         models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
         last_err = ""
 
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            for model_name in models:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-                res = await client.post(url, headers=headers, json=payload)
-                
-                if res.status_code == 200:
-                    data = res.json()
-                    try:
-                        text_result = data["candidates"][0]["content"]["parts"][0]["text"]
-                        return {"status": "success", "result": text_result}
-                    except Exception:
-                        pass
-                else:
-                    err_json = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
-                    last_err = err_json.get("error", {}).get("message", res.text)
-                    if "API_KEY_SERVICE_BLOCKED" in str(err_json) or "denied access" in str(err_json):
-                        return {
-                            "status": "error",
-                            "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng truy cập <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
-                        }
+        for model_name in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=25) as response:
+                    res_body = response.read().decode('utf-8')
+                    data = json.loads(res_body)
+                    text_result = data["candidates"][0]["content"]["parts"][0]["text"]
+                    return {"status": "success", "result": text_result}
+            except urllib.error.HTTPError as http_err:
+                err_body = http_err.read().decode('utf-8')
+                last_err = err_body
+                if "API_KEY_SERVICE_BLOCKED" in err_body or "denied access" in err_body:
+                    return {
+                        "status": "error",
+                        "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng mở <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
+                    }
+            except Exception as e:
+                last_err = str(e)
 
         return {
             "status": "error",
