@@ -1,15 +1,12 @@
 import os
 import base64
-import json
-import google.generativeai as genai
+import httpx
 from fastapi import FastAPI, UploadFile, File, Form
 from typing import Optional
 
 app = FastAPI()
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
 
 @app.post("/verify")
 async def verify_news(
@@ -19,24 +16,23 @@ async def verify_news(
     image_base64: Optional[str] = Form(None)
 ):
     try:
-        if not GEMINI_KEY:
-            return {"status": "error", "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"}
+        if not GEMINI_KEY or not GEMINI_KEY.strip():
+            return {
+                "status": "error",
+                "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"
+            }
 
-        # Prompt Google Lens chuyên biệt kiểm chứng tin tức
         prompt = """
-        Bạn là hệ thống kiểm chứng tin tức thông minh FactAI Lens.
-        Hãy phân tích hình ảnh/văn bản được chọn và tìm kiếm thông tin thực tế trên Google Search.
-
-        Yêu cầu trả về định dạng HTML gọn gàng gồm:
-        1. <b>[KẾT LUẬN]</b>: <span style="color:#34A853">🟢 CHÍNH XÁC</span> hoặc <span style="color:#EA4335">🔴 TIN GIẢ / XUYÊN TẠC</span> hoặc <span style="color:#FBBC05">🟡 CẦN KIỂM CHỨNG</span>
-        2. <b>[TÓM TẮT SỰ THẬT]</b>: Trình bày ngắn gọn trong 2-3 câu sự thật dựa trên báo chí chính thống.
-        3. <b>[NGUỒN ĐỐI SOÁT]</b>: Trích dẫn tên tờ báo hoặc đường link kiểm chứng nếu có.
+        Hãy kiểm tra nội dung và xác minh tính đúng sai của thông tin sau:
+        1. Tóm tắt ngắn gọn nội dung bài viết.
+        2. Kết luận rõ ràng: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
+        3. Trình bày ngắn gọn sự thật dựa trên các nguồn báo chí chính thống.
         """
 
-        contents = [prompt]
+        parts = [{"text": prompt}]
 
         if text and text.strip():
-            contents.append(f"Văn bản khoanh vùng:\n{text.strip()}")
+            parts.append({"text": f"Văn bản khoanh vùng:\n{text.strip()}"})
 
         image_bytes = None
         if file:
@@ -51,26 +47,54 @@ async def verify_news(
                     pass
 
         if image_bytes:
-            contents.append({'mime_type': 'image/jpeg', 'data': image_bytes})
+            b64_str = base64.b64encode(image_bytes).decode('utf-8')
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": b64_str
+                }
+            })
 
-        if not image_bytes and (not text or not text.strip()):
+        if len(parts) == 1:
             return {"status": "error", "message": "Vui lòng khoanh vùng văn bản hoặc hình ảnh!"}
 
-        # Tích hợp Google Search Grounding (Tìm kiếm thông tin thực tế trên Google)
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash', tools=[{"google_search": {}}])
-            response = model.generate_content(contents)
-        except Exception:
-            # Fallback nếu model không hỗ trợ tool
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(contents)
+        # Gửi Header x-goog-api-key chuẩn cho Auth Key AQ...
+        headers = {
+            "x-goog-api-key": GEMINI_KEY.strip(),
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "contents": [{"parts": parts}]
+        }
 
-        if not response or not response.text:
-            return {"status": "error", "message": "Không nhận được phản hồi từ AI"}
+        # Thử các Model tương thích với Auth Key
+        models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
+        last_err = ""
+
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            for model_name in models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+                res = await client.post(url, headers=headers, json=payload)
+                
+                if res.status_code == 200:
+                    data = res.json()
+                    try:
+                        text_result = data["candidates"][0]["content"]["parts"][0]["text"]
+                        return {"status": "success", "result": text_result}
+                    except Exception:
+                        pass
+                else:
+                    err_json = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
+                    last_err = err_json.get("error", {}).get("message", res.text)
+                    if "API_KEY_SERVICE_BLOCKED" in str(err_json) or "denied access" in str(err_json):
+                        return {
+                            "status": "error",
+                            "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng truy cập <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
+                        }
 
         return {
-            "status": "success",
-            "result": response.text
+            "status": "error",
+            "message": f"Lỗi xử lý AI: {last_err}"
         }
 
     except Exception as e:
