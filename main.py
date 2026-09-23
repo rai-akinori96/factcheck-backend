@@ -24,17 +24,19 @@ async def verify_news(
                 "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"
             }
 
+        # Prompt AI Companion trò chuyện & đối soát thông minh
         prompt = """
-        Hãy kiểm tra nội dung và xác minh tính đúng sai của thông tin sau:
-        1. Tóm tắt ngắn gọn nội dung bài viết.
-        2. Kết luận rõ ràng: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
-        3. Trình bày ngắn gọn sự thật dựa trên các nguồn báo chí chính thống.
+        Bạn là FactAI Companion - Một người bạn đồng hành thông minh, thân thiện trên màn hình điện thoại.
+        Nhiệm vụ của bạn:
+        1. Đọc và phân tích kỹ nội dung/hình ảnh trên màn hình người dùng vừa khoanh vùng.
+        2. Đưa ra nhận xét ngắn gọn và kết luận rõ ràng về độ tin cậy: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
+        3. Trao đổi, giải đáp các câu hỏi tiếp theo của người dùng một cách tự nhiên, thông minh và hữu ích.
         """
 
         parts = [{"text": prompt}]
 
         if text and text.strip():
-            parts.append({"text": f"Văn bản khoanh vùng:\n{text.strip()}"})
+            parts.append({"text": f"Nội dung/Câu hỏi từ người dùng:\n{text.strip()}"})
 
         image_bytes = None
         if file:
@@ -68,7 +70,7 @@ async def verify_news(
             "User-Agent": "FactAI-App/1.0"
         }
 
-        # Thử lần lượt các Model Gemini
+        # Dò các Model Gemini tương thích
         models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
         last_err = ""
 
