@@ -1,29 +1,59 @@
 import google.generativeai as genai
 from fastapi import FastAPI, UploadFile, File, Form
+from typing import Optional
 
 app = FastAPI()
+
+# Thay YOUR_GEMINI_API_KEY bằng API Key thật của bạn
 genai.configure(api_key="YOUR_GEMINI_API_KEY")
 
 @app.post("/verify")
-async def verify_news(image: UploadFile = File(None), text: str = Form("")):
+async def verify_news(
+    image: Optional[UploadFile] = File(None), 
+    text: Optional[str] = Form("")
+):
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        # Sửa tên model chuẩn gemini-1.5-flash
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
+        prompt = """
+        Hãy kiểm tra nội dung và xác minh tính đúng sai của thông tin sau:
+        1. Tóm tắt ngắn gọn nội dung bài viết.
+        2. Kết luận rõ ràng: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
+        3. Trình bày ngắn gọn sự thật dựa trên các nguồn báo chí chính thống.
+        """
+
+        contents = [prompt]
+
+        # Nếu có gửi kèm văn bản
+        if text and text.strip():
+            contents.append(f"Văn bản cần kiểm tra:\n{text}")
+
+        # Nếu có gửi kèm hình ảnh
         if image:
             image_bytes = await image.read()
-            cookie_picture = {
-                'mime_type': 'image/jpeg',
+            mime_type = image.content_type or 'image/jpeg'
+            
+            image_part = {
+                'mime_type': mime_type,
                 'data': image_bytes
             }
-            prompt = """
-            Hãy đọc văn bản trong ảnh này và xác minh tính đúng sai của thông tin:
-            1. Tóm tắt ngắn gọn nội dung bài viết.
-            2. Kết luận: [CHÍNH XÁC / SẢN TIN / CẦN KIỂM CHỨNG].
-            3. Trình bày ngắn gọn sự thật dựa trên báo chí chính thống.
-            """
-            response = model.generate_content([prompt, cookie_picture])
-            return response.text
-        else:
-            return "Không nhận được hình ảnh!"
+            contents.append(image_part)
+
+        # Trường hợp không gửi cả ảnh lẫn text
+        if not image and (not text or not text.strip()):
+            return {"status": "error", "message": "Vui lòng gửi kèm hình ảnh hoặc văn bản!"}
+
+        # Gọi Gemini API
+        response = model.generate_content(contents)
+        
+        return {
+            "status": "success",
+            "result": response.text
+        }
+
     except Exception as e:
-        return f"Lỗi xử lý AI: {str(e)}"
+        return {
+            "status": "error",
+            "message": f"Lỗi xử lý AI: {str(e)}"
+        }
