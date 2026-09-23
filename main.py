@@ -1,34 +1,29 @@
-import os
-from fastapi import FastAPI, UploadFile, File
 import google.generativeai as genai
+from fastapi import FastAPI, UploadFile, File, Form
 
 app = FastAPI()
-
-# Khởi tạo Gemini API
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+genai.configure(api_key="YOUR_GEMINI_API_KEY")
 
 @app.post("/verify")
-async def verify_claim(file: UploadFile = File(...)):
-    image_bytes = await file.read()
-    
-    prompt = """
-    Bạn là chuyên gia kiểm chứng thông tin (Fact-checker).
-    1. Đọc hình ảnh màn hình này và trích xuất nội dung/tuyên bố chính.
-    2. Đánh giá xem nội dung là ĐÚNG, SAI, hay CẦN CẢNH BÁO.
-    3. Giải thích ngắn gọn 2-3 câu lý do dựa trên thông tin chính thống.
-    Format trả về dạng JSON:
-    {
-      "status": "ĐÚNG" hoặc "SAI" hoặc "CẦN CẢNH BÁO",
-      "confidence": "90%",
-      "summary": "Nội dung giải thích...",
-      "sources": ["Nguồn tham khảo nếu có"]
-    }
-    """
-
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content([
-        {'mime_type': 'image/jpeg', 'data': image_bytes},
-        prompt
-    ])
-    
-    return {"result": response.text}
+async def verify_news(image: UploadFile = File(None), text: str = Form("")):
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        if image:
+            image_bytes = await image.read()
+            cookie_picture = {
+                'mime_type': 'image/jpeg',
+                'data': image_bytes
+            }
+            prompt = """
+            Hãy đọc văn bản trong ảnh này và xác minh tính đúng sai của thông tin:
+            1. Tóm tắt ngắn gọn nội dung bài viết.
+            2. Kết luận: [CHÍNH XÁC / SẢN TIN / CẦN KIỂM CHỨNG].
+            3. Trình bày ngắn gọn sự thật dựa trên báo chí chính thống.
+            """
+            response = model.generate_content([prompt, cookie_picture])
+            return response.text
+        else:
+            return "Không nhận được hình ảnh!"
+    except Exception as e:
+        return f"Lỗi xử lý AI: {str(e)}"
