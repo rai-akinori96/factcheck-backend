@@ -10,7 +10,6 @@ from typing import Optional
 app = FastAPI()
 
 # Hỗ trợ xoay vòng nhiều Gemini API Keys (phân cách bằng dấu phẩy)
-# Ví dụ trên Render: GEMINI_API_KEY="AIzaSyA...,AIzaSyB...,AIzaSyC..."
 raw_keys = os.getenv("GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEYS", "")
 API_KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
@@ -40,7 +39,7 @@ async def verify_news(
                 "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"
             }
 
-        # System Prompt
+        # System Prompt khắt khe
         prompt = """
         [BỐI CẢNH HỆ THỐNG]
         Bạn là một AI kiểm tra sự thật (Fact-check) chuyên nghiệp. Bạn có khả năng tự động cập nhật và suy luận dòng thời gian thực tế dựa trên các kết quả tìm kiếm (Google Search Grounding) mới nhất.
@@ -101,7 +100,7 @@ async def verify_news(
         models = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]
         last_err = ""
 
-        # Xoay vòng ngẫu nhiên các Key dự phòng
+        # Xoay vòng ngẫu nhiên các Key
         shuffled_keys = list(API_KEYS)
         random.shuffle(shuffled_keys)
 
@@ -115,10 +114,10 @@ async def verify_news(
             for model_name in models:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
                 
-                # Thử 1: Grounding Search
+                # Thử 1: Google Search Grounding
                 try:
                     req = urllib.request.Request(url, data=payload_with_tools, headers=headers, method="POST")
-                    with urllib.request.urlopen(req, timeout=5) as response:
+                    with urllib.request.urlopen(req, timeout=6) as response:
                         res_body = response.read().decode('utf-8')
                         data = json.loads(res_body)
                         text_result = extract_gemini_text(data)
@@ -132,7 +131,6 @@ async def verify_news(
                             "status": "error",
                             "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng mở <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
                         }
-                    # Nếu bận 429 -> Nhảy sang Key tiếp theo ngay
                     if http_err.code in (429, 503):
                         break
                 except Exception:
@@ -141,7 +139,7 @@ async def verify_news(
                 # Thử 2: Plain Payload
                 try:
                     req_plain = urllib.request.Request(url, data=payload_plain, headers=headers, method="POST")
-                    with urllib.request.urlopen(req_plain, timeout=5) as response:
+                    with urllib.request.urlopen(req_plain, timeout=6) as response:
                         res_body = response.read().decode('utf-8')
                         data = json.loads(res_body)
                         text_result = extract_gemini_text(data)
@@ -157,7 +155,7 @@ async def verify_news(
 
         return {
             "status": "error",
-            "message": "⚠️ Hệ thống AI Google đang đạt giới hạn lượt gọi miễn phí (15 lượt/phút). Bạn chờ 10-15 giây rồi bấm Gửi lại nhé!"
+            "message": "⚠️ Hệ thống AI Google đang đạt giới hạn lượt gọi miễn phí (15 lượt/phút). Bạn vui lòng chờ 10-15 giây rồi bấm Gửi lại nhé!"
         }
 
     except Exception as e:
