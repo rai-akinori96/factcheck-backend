@@ -100,29 +100,39 @@ async def verify_news(
             "User-Agent": "FactAI-App/1.0"
         }
 
-        # Ưu tiên các model phản hồi siêu tốc
-        models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]
+        # Đa dạng danh sách Model để phòng lỗi 429 Quota
+        models = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]
         last_err = ""
 
         for model_name in models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             
-            # Thử 1: Plain Payload trước cho phản hồi siêu tốc (<1.5s)
-            req_plain = urllib.request.Request(url, data=payload_plain, headers=headers, method="POST")
+            # Thử 1: Kích hoạt Google Search Grounding
+            req = urllib.request.Request(url, data=payload_with_tools, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(req_plain, timeout=8) as response:
+                with urllib.request.urlopen(req, timeout=6) as response:
                     res_body = response.read().decode('utf-8')
                     data = json.loads(res_body)
                     text_result = extract_gemini_text(data)
                     if text_result:
                         return {"status": "success", "result": text_result}
+            except urllib.error.HTTPError as http_err:
+                err_body = http_err.read().decode('utf-8')
+                last_err = err_body
+                if "API_KEY_SERVICE_BLOCKED" in err_body or "denied access" in err_body:
+                    return {
+                        "status": "error",
+                        "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng mở <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
+                    }
+                # Nếu 429 Quota -> Chuyển sang Model tiếp theo ngay
+                pass
             except Exception:
                 pass
 
-            # Thử 2: Kích hoạt Google Search Grounding
-            req = urllib.request.Request(url, data=payload_with_tools, headers=headers, method="POST")
+            # Thử 2: Plain Payload nếu bận
+            req_plain = urllib.request.Request(url, data=payload_plain, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(req, timeout=8) as response:
+                with urllib.request.urlopen(req_plain, timeout=6) as response:
                     res_body = response.read().decode('utf-8')
                     data = json.loads(res_body)
                     text_result = extract_gemini_text(data)
@@ -141,7 +151,7 @@ async def verify_news(
 
         return {
             "status": "error",
-            "message": f"Lỗi xử lý AI: {last_err or 'Hệ thống bận, vui lòng quét lại'}"
+            "message": "⚠️ Hệ thống AI Google đang tạm hết lượt gọi miễn phí (Rate Limit 15 lượt/phút). Vui lòng chờ 10-15 giây rồi bấm Gửi lại!"
         }
 
     except Exception as e:
