@@ -24,19 +24,22 @@ async def verify_news(
                 "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"
             }
 
-        # Prompt AI Companion trò chuyện & đối soát thông minh
+        # Prompt BẮT BUỘC bỏ hoàn toàn chào hỏi rườm rà
         prompt = """
-        Bạn là FactAI Companion - Một người bạn đồng hành thông minh, thân thiện trên màn hình điện thoại.
-        Nhiệm vụ của bạn:
-        1. Đọc và phân tích kỹ nội dung/hình ảnh trên màn hình người dùng vừa khoanh vùng.
-        2. Đưa ra nhận xét ngắn gọn và kết luận rõ ràng về độ tin cậy: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
-        3. Trao đổi, giải đáp các câu hỏi tiếp theo của người dùng một cách tự nhiên, thông minh và hữu ích.
+        Bạn là hệ thống AI phân tích dữ liệu màn hình.
+        QUY TẮC BẮT BUỘC:
+        - TUYỆT ĐỐI KHÔNG chào hỏi, KHÔNG giới thiệu tên (Cấm hoàn toàn các câu như "Chào bạn!", "Mình là FactAI...", "Xin chào...").
+        - Trả lời TRỰC TIẾP VÀO TRỌNG TÂM câu hỏi hoặc kết quả phân tích nội dung được khoanh vùng.
+        - Trình bày ngắn gọn, rõ ràng theo cấu trúc:
+          1. Phân tích / Trả lời trực tiếp nội dung khoanh vùng.
+          2. Kết luận độ tin cậy: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG] (nếu là bài báo/tin tức).
+          3. Giải thích ngắn gọn lý do.
         """
 
         parts = [{"text": prompt}]
 
         if text and text.strip():
-            parts.append({"text": f"Nội dung/Câu hỏi từ người dùng:\n{text.strip()}"})
+            parts.append({"text": f"Nội dung/Câu hỏi:\n{text.strip()}"})
 
         image_bytes = None
         if file:
@@ -70,7 +73,7 @@ async def verify_news(
             "User-Agent": "FactAI-App/1.0"
         }
 
-        # Dò các Model Gemini tương thích
+        # Thử các Model Gemini tương thích
         models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
         last_err = ""
 
