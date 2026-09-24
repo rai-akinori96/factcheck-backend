@@ -11,7 +11,7 @@ app = FastAPI()
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 def extract_gemini_text(data):
-    """Trích xuất đầy đủ văn bản từ câu trả lời có chứa Google Search Grounding"""
+    """Trích xuất đầy đủ văn bản từ kết quả có chứa Google Search Grounding"""
     try:
         candidates = data.get("candidates", [])
         if not candidates:
@@ -36,7 +36,7 @@ async def verify_news(
                 "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"
             }
 
-        # Prompt Quy Tắc Nghiêm Ngặt & Tích Hợp Google Search Grounding
+        # System Prompt khắt khe
         prompt = """
         [BỐI CẢNH HỆ THỐNG]
         Bạn là một AI kiểm tra sự thật (Fact-check) chuyên nghiệp. Bạn có khả năng tự động cập nhật và suy luận dòng thời gian thực tế dựa trên các kết quả tìm kiếm (Google Search Grounding) mới nhất.
@@ -49,7 +49,7 @@ async def verify_news(
         [QUY TẮC HIỂN THỊ KẾT QUẢ (OUTPUT RESTRICTIONS)]
         - TRỰC TIẾP & KHÁCH QUAN: Chỉ trả về kết quả phân tích sự thật của thông tin được yêu cầu.
         - BẢO MẬT THỜI GIAN: Tuyệt đối KHÔNG hiển thị các câu từ, mốc thời gian hệ thống, hoặc các cụm từ khẳng định thời gian hiện tại (Ví dụ CẤM viết: "Tính đến năm 2026...", "Hiện tại là...", "Hôm nay là ngày...", "Dữ liệu cập nhật mới nhất ngày..."). Người dùng chỉ cần câu trả lời đúng.
-        - KHÔNG CHÀO HỎI, KHÔNG RƯỜM RÀ: Bỏ hoàn toàn các câu "Chào bạn", "Mình là...".
+        - KHÔNG CHÀO HỎI, KHÔNG RƯỜM RÀ: Bỏ hoàn toàn các câu "Chào bạn", "Mình là FactAI...".
         - CẤU TRÚC KẾT QUẢ:
           1. Trả lời / Phân tích trực tiếp trọng tâm thông tin khoanh vùng.
           2. Kết luận độ tin cậy: [CHÍNH XÁC / TIN GIẢ / CẦN KIỂM CHỨNG].
@@ -85,6 +85,7 @@ async def verify_news(
         if len(parts) == 1:
             return {"status": "error", "message": "Vui lòng khoanh vùng văn bản hoặc hình ảnh!"}
 
+        # Kích hoạt Google Search Grounding
         payload_with_tools = json.dumps({
             "contents": [{"parts": parts}],
             "tools": [{"google_search": {}}]
@@ -106,7 +107,7 @@ async def verify_news(
         for model_name in models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             
-            # Thử 1: Kích hoạt Google Search Grounding thời gian thực
+            # Thử 1: Bật Google Search Grounding thời gian thực
             req = urllib.request.Request(url, data=payload_with_tools, headers=headers, method="POST")
             try:
                 with urllib.request.urlopen(req, timeout=25) as response:
@@ -118,7 +119,7 @@ async def verify_news(
             except Exception:
                 pass
 
-            # Thử 2: Plain Payload nếu không bật tools
+            # Thử 2: Plain Payload
             req_plain = urllib.request.Request(url, data=payload_plain, headers=headers, method="POST")
             try:
                 with urllib.request.urlopen(req_plain, timeout=25) as response:
