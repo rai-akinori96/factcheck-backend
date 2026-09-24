@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import random
 import urllib.request
 import urllib.error
 from fastapi import FastAPI, UploadFile, File, Form
@@ -8,7 +9,10 @@ from typing import Optional
 
 app = FastAPI()
 
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+# Hỗ trợ xoay vòng nhiều Gemini API Keys (phân cách bằng dấu phẩy)
+# Ví dụ trên Render: GEMINI_API_KEY="AIzaSyA...,AIzaSyB...,AIzaSyC..."
+raw_keys = os.getenv("GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEYS", "")
+API_KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
 def extract_gemini_text(data):
     """Trích xuất đầy đủ văn bản từ kết quả AI"""
@@ -30,7 +34,7 @@ async def verify_news(
     image_base64: Optional[str] = Form(None)
 ):
     try:
-        if not GEMINI_KEY or not GEMINI_KEY.strip():
+        if not API_KEYS:
             return {
                 "status": "error",
                 "message": "⚠️ Thiếu GEMINI_API_KEY trên Render!"
@@ -94,64 +98,66 @@ async def verify_news(
             "contents": [{"parts": parts}]
         }).encode('utf-8')
 
-        headers = {
-            "x-goog-api-key": GEMINI_KEY.strip(),
-            "Content-Type": "application/json",
-            "User-Agent": "FactAI-App/1.0"
-        }
-
-        # Đa dạng danh sách Model để phòng lỗi 429 Quota
         models = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]
         last_err = ""
 
-        for model_name in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-            
-            # Thử 1: Kích hoạt Google Search Grounding
-            req = urllib.request.Request(url, data=payload_with_tools, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req, timeout=6) as response:
-                    res_body = response.read().decode('utf-8')
-                    data = json.loads(res_body)
-                    text_result = extract_gemini_text(data)
-                    if text_result:
-                        return {"status": "success", "result": text_result}
-            except urllib.error.HTTPError as http_err:
-                err_body = http_err.read().decode('utf-8')
-                last_err = err_body
-                if "API_KEY_SERVICE_BLOCKED" in err_body or "denied access" in err_body:
-                    return {
-                        "status": "error",
-                        "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng mở <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
-                    }
-                # Nếu 429 Quota -> Chuyển sang Model tiếp theo ngay
-                pass
-            except Exception:
-                pass
+        # Xoay vòng ngẫu nhiên các Key dự phòng
+        shuffled_keys = list(API_KEYS)
+        random.shuffle(shuffled_keys)
 
-            # Thử 2: Plain Payload nếu bận
-            req_plain = urllib.request.Request(url, data=payload_plain, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req_plain, timeout=6) as response:
-                    res_body = response.read().decode('utf-8')
-                    data = json.loads(res_body)
-                    text_result = extract_gemini_text(data)
-                    if text_result:
-                        return {"status": "success", "result": text_result}
-            except urllib.error.HTTPError as http_err:
-                err_body = http_err.read().decode('utf-8')
-                last_err = err_body
-                if "API_KEY_SERVICE_BLOCKED" in err_body or "denied access" in err_body:
-                    return {
-                        "status": "error",
-                        "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng mở <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
-                    }
-            except Exception as e2:
-                last_err = str(e2)
+        for current_key in shuffled_keys:
+            headers = {
+                "x-goog-api-key": current_key,
+                "Content-Type": "application/json",
+                "User-Agent": "FactAI-App/1.0"
+            }
+
+            for model_name in models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+                
+                # Thử 1: Grounding Search
+                try:
+                    req = urllib.request.Request(url, data=payload_with_tools, headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=5) as response:
+                        res_body = response.read().decode('utf-8')
+                        data = json.loads(res_body)
+                        text_result = extract_gemini_text(data)
+                        if text_result:
+                            return {"status": "success", "result": text_result}
+                except urllib.error.HTTPError as http_err:
+                    err_body = http_err.read().decode('utf-8')
+                    last_err = err_body
+                    if "API_KEY_SERVICE_BLOCKED" in err_body or "denied access" in err_body:
+                        return {
+                            "status": "error",
+                            "message": "❌ <b>Dự án Google Cloud bị tắt dịch vụ AI!</b><br><br>👉 Vui lòng mở <a href='https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com'>console.cloud.google.com/apis/library/generativelanguage.googleapis.com</a> và bấm <b>ENABLE</b> để bật lại."
+                        }
+                    # Nếu bận 429 -> Nhảy sang Key tiếp theo ngay
+                    if http_err.code in (429, 503):
+                        break
+                except Exception:
+                    pass
+
+                # Thử 2: Plain Payload
+                try:
+                    req_plain = urllib.request.Request(url, data=payload_plain, headers=headers, method="POST")
+                    with urllib.request.urlopen(req_plain, timeout=5) as response:
+                        res_body = response.read().decode('utf-8')
+                        data = json.loads(res_body)
+                        text_result = extract_gemini_text(data)
+                        if text_result:
+                            return {"status": "success", "result": text_result}
+                except urllib.error.HTTPError as http_err:
+                    err_body = http_err.read().decode('utf-8')
+                    last_err = err_body
+                    if http_err.code in (429, 503):
+                        break
+                except Exception as e2:
+                    last_err = str(e2)
 
         return {
             "status": "error",
-            "message": "⚠️ Hệ thống AI Google đang tạm hết lượt gọi miễn phí (Rate Limit 15 lượt/phút). Vui lòng chờ 10-15 giây rồi bấm Gửi lại!"
+            "message": "⚠️ Hệ thống AI Google đang đạt giới hạn lượt gọi miễn phí (15 lượt/phút). Bạn chờ 10-15 giây rồi bấm Gửi lại nhé!"
         }
 
     except Exception as e:
